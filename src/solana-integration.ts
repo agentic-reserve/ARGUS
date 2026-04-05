@@ -10,6 +10,14 @@
  * Uses @solana/web3.js and @solana/kit
  */
 
+import { 
+  Connection, 
+  PublicKey, 
+  Transaction, 
+  SystemProgram, 
+  LAMPORTS_PER_SOL,
+  clusterApiUrl
+} from '@solana/web3.js';
 import { z } from 'zod';
 import { tool } from './tools.js';
 
@@ -45,9 +53,10 @@ export interface ProgramInfo {
 // ==================== Solana Connection ====================
 
 /**
- * Create Solana connection (placeholder - would use @solana/web3.js in real impl)
+ * Create Solana connection
  */
 export class SolanaConnection {
+  private connection: Connection | null = null;
   private config: SolanaConfig;
   private connected: boolean = false;
 
@@ -56,14 +65,26 @@ export class SolanaConnection {
   }
 
   async connect(): Promise<void> {
-    // Would connect to Solana RPC
-    this.connected = true;
-    console.log(`[Solana] Connected to ${this.config.network} at ${this.config.rpcUrl}`);
+    try {
+      const endpoint = this.config.network === 'localnet' 
+        ? this.config.rpcUrl 
+        : clusterApiUrl(this.config.network);
+      
+      this.connection = new Connection(endpoint, this.config.commitment || 'confirmed');
+      const version = await this.connection.getVersion();
+      console.log(`[Solana] Connected to ${this.config.network}: ${version['solana-core']}`);
+      this.connected = true;
+    } catch (error) {
+      console.error('[Solana] Connection failed:', error);
+      throw error;
+    }
   }
 
   async getBalance(publicKey: string): Promise<number> {
-    // Would fetch balance from RPC
-    return 1.5; // Mock balance in SOL
+    if (!this.connection) throw new Error('Not connected');
+    const pubKey = new PublicKey(publicKey);
+    const balance = await this.connection.getBalance(pubKey);
+    return balance / LAMPORTS_PER_SOL;
   }
 
   async sendTransaction(
@@ -71,39 +92,69 @@ export class SolanaConnection {
     to: string,
     amount: number
   ): Promise<TransactionResult> {
-    // Would sign and send transaction
-    return {
-      signature: 'mock-sig-' + Date.now(),
-      success: true,
-      slot: 123456789,
-    };
+    if (!this.connection) throw new Error('Not connected');
+    
+    try {
+      const fromPubKey = new PublicKey(from);
+      const toPubKey = new PublicKey(to);
+      
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: fromPubKey,
+          toPubkey: toPubKey,
+          lamports: amount * LAMPORTS_PER_SOL,
+        })
+      );
+      void transaction; // Mark as used - would be signed and sent with wallet adapter
+      
+      return {
+        signature: 'pending-signing',
+        success: false,
+        error: 'Wallet signing required - integrate Phantom/Solflare adapter',
+      };
+    } catch (error) {
+      return {
+        signature: '',
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
-  async deployProgram(
-    programPath: string,
-    payer: string
-  ): Promise<{ programId: string; signature: string }> {
-    // Would deploy BPF program
-    return {
-      programId: 'mock-program-' + Date.now(),
-      signature: 'mock-deploy-sig',
-    };
+  async getAccountInfo(address: string): Promise<any> {
+    if (!this.connection) throw new Error('Not connected');
+    const pubKey = new PublicKey(address);
+    return this.connection.getAccountInfo(pubKey);
   }
 
-  async callProgram(
-    programId: string,
-    instruction: string,
-    accounts: string[]
-  ): Promise<TransactionResult> {
-    // Would create and send program instruction
-    return {
-      signature: 'mock-call-sig-' + Date.now(),
-      success: true,
-    };
+  async getProgramAccounts(programId: string): Promise<readonly any[]> {
+    if (!this.connection) throw new Error('Not connected');
+    const pubKey = new PublicKey(programId);
+    return this.connection.getProgramAccounts(pubKey);
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.connected && this.connection !== null;
+  }
+
+  getConnection(): Connection | null {
+    return this.connection;
+  }
+
+  // Stub methods for program deployment and calling - requires Anchor integration
+  async deployProgram(_programPath: string, _payer: string): Promise<{ programId: string; signature: string }> {
+    return {
+      programId: 'not-implemented',
+      signature: 'requires-anchor-sdk',
+    };
+  }
+
+  async callProgram(_programId: string, _instruction: string, _accounts: string[]): Promise<TransactionResult> {
+    return {
+      signature: '',
+      success: false,
+      error: 'Program instruction calling requires Anchor SDK integration',
+    };
   }
 }
 
@@ -119,10 +170,10 @@ export function createGetBalanceTool(connection: SolanaConnection) {
     inputSchema: z.object({
       publicKey: z.string().describe('Solana wallet public key'),
     }),
-    execute: async ({ publicKey }: { publicKey: string }) => {
-      const balance = await connection.getBalance(publicKey);
+    execute: async ({ publicKey: _publicKey }: { publicKey: string }) => {
+      const balance = await connection.getBalance(_publicKey);
       return {
-        publicKey,
+        publicKey: _publicKey,
         balance,
         network: 'devnet',
         timestamp: new Date().toISOString(),
@@ -143,22 +194,14 @@ export function createSendSoolTool(connection: SolanaConnection) {
       to: z.string().describe('Recipient public key'),
       amount: z.number().describe('Amount in SOL'),
     }),
-    execute: async ({
-      from,
-      to,
-      amount,
-    }: {
-      from: string;
-      to: string;
-      amount: number;
-    }) => {
-      const result = await connection.sendTransaction(from, to, amount);
+    execute: async ({ from: _from, to: _to, amount: _amount }: { from: string; to: string; amount: number }) => {
+      const result = await connection.sendTransaction(_from, _to, _amount);
       return {
         success: result.success,
         signature: result.signature,
-        from,
-        to,
-        amount,
+        from: _from,
+        to: _to,
+        amount: _amount,
         timestamp: new Date().toISOString(),
       };
     },
@@ -176,14 +219,8 @@ export function createDeployProgramTool(connection: SolanaConnection) {
       programPath: z.string().describe('Path to compiled .so file'),
       payer: z.string().describe('Payer wallet public key'),
     }),
-    execute: async ({
-      programPath,
-      payer,
-    }: {
-      programPath: string;
-      payer: string;
-    }) => {
-      const result = await connection.deployProgram(programPath, payer);
+    execute: async ({ programPath: _programPath, payer: _payer }: { programPath: string; payer: string }) => {
+      const result = await connection.deployProgram(_programPath, _payer);
       return {
         success: true,
         programId: result.programId,
@@ -206,20 +243,12 @@ export function createCallProgramTool(connection: SolanaConnection) {
       instruction: z.string().describe('Instruction data'),
       accounts: z.array(z.string()).describe('Account public keys involved'),
     }),
-    execute: async ({
-      programId,
-      instruction,
-      accounts,
-    }: {
-      programId: string;
-      instruction: string;
-      accounts: string[];
-    }) => {
-      const result = await connection.callProgram(programId, instruction, accounts);
+    execute: async ({ programId: _programId, instruction: _instruction, accounts: _accounts }: { programId: string; instruction: string; accounts: string[] }) => {
+      const result = await connection.callProgram(_programId, _instruction, _accounts);
       return {
         success: result.success,
         signature: result.signature,
-        programId,
+        programId: _programId,
         timestamp: new Date().toISOString(),
       };
     },

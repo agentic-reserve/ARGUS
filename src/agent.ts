@@ -13,8 +13,7 @@
  * - Headless and TUI interfaces
  */
 
-import { OpenRouter, tool, stepCountIs } from '@openrouter/sdk';
-import type { Tool, StreamableOutputItem } from '@openrouter/sdk';
+import { OpenRouter, tool, stepCountIs, Tool, StreamableOutputItem } from './openrouter-stub.js';
 import { EventEmitter } from 'eventemitter3';
 import { z } from 'zod';
 
@@ -127,12 +126,11 @@ Always prioritize security, accuracy, and enterprise compliance.`;
     this.emit('thinking:start');
 
     try {
-      const result = this.client.callModel({
+      const result = await this.client.complete({
         model: this.config.model,
-        instructions: this.config.instructions,
-        input: this.messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: this.messages.map((m) => ({ role: m.role, content: m.content })),
         tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-        stopWhen: [stepCountIs(this.config.maxSteps)],
+        maxSteps: this.config.maxSteps,
       });
 
       this.emit('stream:start');
@@ -145,7 +143,7 @@ Always prioritize security, accuracy, and enterprise compliance.`;
         switch (item.type) {
           case 'message':
             const textContent = item.content?.find((c: { type: string }) => c.type === 'output_text');
-            if (textContent && 'text' in textContent) {
+            if (textContent && 'text' in textContent && typeof textContent.text === 'string') {
               const newText = textContent.text;
               if (newText !== fullText) {
                 const delta = newText.slice(fullText.length);
@@ -167,7 +165,7 @@ Always prioritize security, accuracy, and enterprise compliance.`;
 
           case 'reasoning':
             const reasoningText = item.content?.find((c: { type: string }) => c.type === 'reasoning_text');
-            if (reasoningText && 'text' in reasoningText) {
+            if (reasoningText && 'text' in reasoningText && typeof reasoningText.text === 'string') {
               this.emit('reasoning:update', reasoningText.text);
             }
             break;
@@ -201,12 +199,11 @@ Always prioritize security, accuracy, and enterprise compliance.`;
     this.emit('message:user', userMessage);
 
     try {
-      const result = this.client.callModel({
+      const result = await this.client.complete({
         model: this.config.model,
-        instructions: this.config.instructions,
-        input: this.messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: this.messages.map((m) => ({ role: m.role, content: m.content })),
         tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-        stopWhen: [stepCountIs(this.config.maxSteps)],
+        maxSteps: this.config.maxSteps,
       });
 
       const fullText = await result.getText();

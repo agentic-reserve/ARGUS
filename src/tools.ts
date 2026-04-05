@@ -8,8 +8,11 @@
  * - Entity/ontology management
  */
 
-import { tool } from '@openrouter/sdk';
+import { tool } from './openrouter-stub.js';
 import { z } from 'zod';
+
+// Re-export tool for use by other modules
+export { tool };
 
 // ==================== Coordination Tools ====================
 

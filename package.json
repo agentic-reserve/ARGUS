@@ -28,7 +28,9 @@
   "author": "ARGUS Enterprise Team",
   "license": "MIT",
   "dependencies": {
-    "@openrouter/sdk": "^1.0.0",
+    "@solana/web3.js": "^1.91.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "csv-parse": "^5.5.0",
     "eventemitter3": "^5.0.1",
     "zod": "^3.22.4",
     "chalk": "^5.3.0",
