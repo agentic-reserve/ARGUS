@@ -1,0 +1,10 @@
+{
+  "dependencies": ["@openrouter/sdk", "eventemitter3", "zod", "chalk", "ora"],
+  "graphs": {
+    "argus-agent": "./src/agent.ts:createArgusAgent"
+  },
+  "env": ".env",
+  "python": {
+    "pythonVersion": "3.11"
+  }
+}
