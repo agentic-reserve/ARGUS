@@ -74,6 +74,175 @@ export interface Workflow {
   startNode: string;
 }
 
+// ==================== Pattern 6: Hierarchical Structure ====================
+
+export interface TeamConfig {
+  name: string;
+  description: string;
+  supervisor: ArgusAgent;
+  agents: Map<string, ArgusAgent>;
+}
+
+export interface HierarchicalConfig {
+  teams: TeamConfig[];
+  topLevelSupervisor: ArgusAgent;
+}
+
+export interface HierarchicalState {
+  currentTeam: string | null;
+  currentAgent: string | null;
+  teamHistory: Array<{ from: string; to: string; timestamp: string }>;
+  messages: Array<{ role: string; content: string }>;
+}
+
+/**
+ * Hierarchical multi-agent structure
+ * Top-level supervisor manages teams, each with their own supervisor
+ */
+export class HierarchicalAgent {
+  private config: HierarchicalConfig;
+  private state: HierarchicalState;
+  private teamRegistry: Map<string, TeamConfig>;
+
+  constructor(config: HierarchicalConfig) {
+    this.config = config;
+    this.teamRegistry = new Map(config.teams.map(t => [t.name, t]));
+    this.state = {
+      currentTeam: null,
+      currentAgent: null,
+      teamHistory: [],
+      messages: [],
+    };
+  }
+
+  /**
+   * Top-level routing - decides which team to activate
+   */
+  async routeToTeam(input: string): Promise<{ team: string; response: string }> {
+    const supervisor = this.config.topLevelSupervisor;
+    supervisor.clearHistory();
+    
+    const teamList = this.config.teams.map(t => `- ${t.name}: ${t.description}`).join('\n');
+    const prompt = `Available teams:\n${teamList}\n\nUser request: ${input}\n\nWhich team should handle this? Respond with just the team name.`;
+    
+    const result = await supervisor.sendSync(prompt);
+    const teamName = result.trim().toLowerCase();
+    
+    if (!this.teamRegistry.has(teamName)) {
+      throw new Error(`Unknown team: ${teamName}`);
+    }
+    
+    this.state.currentTeam = teamName;
+    this.state.teamHistory.push({
+      from: 'top-level',
+      to: teamName,
+      timestamp: new Date().toISOString(),
+    });
+    
+    return { team: teamName, response: result };
+  }
+
+  /**
+   * Route within team - team supervisor decides which agent to call
+   */
+  async routeWithinTeam(input: string, teamName: string): Promise<{ agent: string; response: string }> {
+    const team = this.teamRegistry.get(teamName);
+    if (!team) {
+      throw new Error(`Team not found: ${teamName}`);
+    }
+
+    const agentList = Array.from(team.agents.entries())
+      .map(([name, _]) => `- ${name}`)
+      .join('\n');
+    
+    const prompt = `Team: ${teamName}\nAvailable agents:\n${agentList}\n\nTask: ${input}\n\nWhich agent should handle this? Respond with just the agent name.`;
+    
+    team.supervisor.clearHistory();
+    const result = await team.supervisor.sendSync(prompt);
+    const agentName = result.trim().toLowerCase();
+    
+    if (!team.agents.has(agentName)) {
+      throw new Error(`Unknown agent in team ${teamName}: ${agentName}`);
+    }
+    
+    this.state.currentAgent = agentName;
+    return { agent: agentName, response: result };
+  }
+
+  /**
+   * Execute task with the selected agent
+   */
+  async executeWithAgent(input: string, teamName: string, agentName: string): Promise<string> {
+    const team = this.teamRegistry.get(teamName);
+    if (!team) {
+      throw new Error(`Team not found: ${teamName}`);
+    }
+
+    const agent = team.agents.get(agentName);
+    if (!agent) {
+      throw new Error(`Agent not found: ${agentName}`);
+    }
+
+    agent.clearHistory();
+    const result = await agent.sendSync(input);
+    
+    this.state.messages.push({ role: 'assistant', content: result });
+    return result;
+  }
+
+  /**
+   * Full execution flow: top-level -> team -> agent
+   */
+  async execute(input: string): Promise<{
+    result: string;
+    path: Array<{ level: string; name: string }>;
+  }> {
+    const path: Array<{ level: string; name: string }> = [];
+
+    // Step 1: Top-level routes to team
+    const { team } = await this.routeToTeam(input);
+    path.push({ level: 'team', name: team });
+
+    // Step 2: Team supervisor routes to agent
+    const { agent } = await this.routeWithinTeam(input, team);
+    path.push({ level: 'agent', name: agent });
+
+    // Step 3: Execute with agent
+    const result = await this.executeWithAgent(input, team, agent);
+    path.push({ level: 'execution', name: 'complete' });
+
+    return { result, path };
+  }
+
+  /**
+   * Get current state
+   */
+  getState(): HierarchicalState {
+    return { ...this.state };
+  }
+
+  /**
+   * Get team information
+   */
+  getTeamInfo(teamName: string): TeamConfig | undefined {
+    return this.teamRegistry.get(teamName);
+  }
+
+  /**
+   * List all teams
+   */
+  listTeams(): string[] {
+    return Array.from(this.teamRegistry.keys());
+  }
+}
+
+/**
+ * Factory function to create hierarchical agent
+ */
+export function createHierarchicalAgent(config: HierarchicalConfig): HierarchicalAgent {
+  return new HierarchicalAgent(config);
+}
+
 // ==================== Pattern 1: Subagents ====================
 
 /**
